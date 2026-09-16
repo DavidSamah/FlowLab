@@ -1,0 +1,127 @@
+name: Weather Intelligence Research Pipeline
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "weather_agent/**"
+      - "tests/**"
+      - "requirements-weather.txt"
+      - ".github/workflows/weather-intelligence.yml"
+  push:
+    branches:
+      - weather-intelligence-architecture
+    paths:
+      - "weather_agent/**"
+      - "tests/**"
+      - "requirements-weather.txt"
+      - ".github/workflows/weather-intelligence.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  weather-system:
+    name: Full weather intelligence architecture
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: 00 — Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 01 — Configure Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: 02 — Install scientific dependencies
+        run: pip install -r requirements-weather.txt
+
+      - name: 03 — Run unit and numerical tests
+        run: pytest -q
+
+      - name: 04 — Physics core
+        run: |
+          python -m weather_agent.pipeline --stage physics --out artifacts/04-physics.json
+          echo '## 04 — Physics core' >> "$GITHUB_STEP_SUMMARY"
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"
+          cat artifacts/04-physics.json >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 05 — Thermodynamics, moisture and precipitation
+        run: |
+          python -m weather_agent.pipeline --stage moisture --out artifacts/05-moisture.json
+          echo '## 05 — Thermodynamics, moisture and precipitation' >> "$GITHUB_STEP_SUMMARY"
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"
+          cat artifacts/05-moisture.json >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 06 — Terrain and latitude-dependent Coriolis
+        run: |
+          python -m weather_agent.pipeline --stage terrain --out artifacts/06-terrain-coriolis.json
+          echo '## 06 — Terrain and Coriolis' >> "$GITHUB_STEP_SUMMARY"
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"
+          cat artifacts/06-terrain-coriolis.json >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 07 — Observation generation
+        run: |
+          python -m weather_agent.pipeline --stage observations --out artifacts/07-observations.json
+          echo '## 07 — Observation generation' >> "$GITHUB_STEP_SUMMARY"
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"
+          cat artifacts/07-observations.json >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 08 — Data assimilation
+        run: |
+          python -m weather_agent.pipeline --stage assimilation --out artifacts/08-assimilation.json
+          echo '## 08 — Data assimilation' >> "$GITHUB_STEP_SUMMARY"
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"
+          cat artifacts/08-assimilation.json >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 09 — Ensemble forecast
+        run: |
+          python -m weather_agent.pipeline --stage ensemble --out artifacts/09-ensemble.json
+          echo '## 09 — Ensemble forecast' >> "$GITHUB_STEP_SUMMARY"
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"
+          cat artifacts/09-ensemble.json >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 10 — Learned emulator
+        run: |
+          python -m weather_agent.pipeline --stage emulator --out artifacts/10-emulator.json
+          echo '## 10 — Learned diagnostic emulator' >> "$GITHUB_STEP_SUMMARY"
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"
+          cat artifacts/10-emulator.json >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 11 — Forecast verification
+        run: |
+          python -m weather_agent.pipeline --stage verification --out artifacts/11-verification.json
+          echo '## 11 — Forecast verification' >> "$GITHUB_STEP_SUMMARY"
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"
+          cat artifacts/11-verification.json >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 12 — Bounded learning from error
+        run: |
+          python -m weather_agent.pipeline --stage learning --out artifacts/12-learning.json
+          echo '## 12 — Learning from forecast-system error' >> "$GITHUB_STEP_SUMMARY"
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"
+          cat artifacts/12-learning.json >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 13 — Run complete pipeline snapshot
+        run: python -m weather_agent.pipeline --stage all --out artifacts/13-complete-pipeline.json
+
+      - name: 14 — Publish research artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: weather-intelligence-results
+          path: artifacts/
+          if-no-files-found: warn
+          retention-days: 30
