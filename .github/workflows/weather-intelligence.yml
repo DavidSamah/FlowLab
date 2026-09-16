@@ -2,6 +2,15 @@ name: Weather Intelligence Research Pipeline
 
 on:
   workflow_dispatch:
+    inputs:
+      latitude:
+        description: "Latitude for live Open-Meteo ingestion"
+        required: true
+        default: "-1.2864"
+      longitude:
+        description: "Longitude for live Open-Meteo ingestion"
+        required: true
+        default: "36.8172"
   pull_request:
     paths:
       - "weather_agent/**"
@@ -25,6 +34,9 @@ jobs:
     name: Full weather intelligence architecture
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      FLOWLAB_LATITUDE: ${{ github.event.inputs.latitude || '-1.2864' }}
+      FLOWLAB_LONGITUDE: ${{ github.event.inputs.longitude || '36.8172' }}
 
     steps:
       - name: 00 — Checkout repository
@@ -42,82 +54,102 @@ jobs:
       - name: 03 — Run unit and numerical tests
         run: pytest -q
 
-      - name: 04 — Physics core
+      - name: 04 — Live atmospheric API ingestion — Open-Meteo
+        continue-on-error: true
         run: |
-          python -m weather_agent.pipeline --stage physics --out artifacts/04-physics.json
-          echo '## 04 — Physics core' >> "$GITHUB_STEP_SUMMARY"
+          mkdir -p artifacts
+          python -m weather_agent.live_ingest \
+            --latitude "$FLOWLAB_LATITUDE" \
+            --longitude "$FLOWLAB_LONGITUDE" \
+            --out artifacts/04-live-open-meteo.json
+          echo '## 04 — Live atmosphere: Open-Meteo' >> "$GITHUB_STEP_SUMMARY"
+          echo "Coordinates: $FLOWLAB_LATITUDE, $FLOWLAB_LONGITUDE" >> "$GITHUB_STEP_SUMMARY"
+          echo 'Provider: Open-Meteo — https://open-meteo.com/' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Data licence/attribution: CC BY 4.0; see provider documentation.' >> "$GITHUB_STEP_SUMMARY"
+          if [ -f artifacts/04-live-open-meteo.json ]; then
+            echo '```json' >> "$GITHUB_STEP_SUMMARY"
+            cat artifacts/04-live-open-meteo.json >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'Live API unavailable; later synthetic/research stages continue.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: 05 — Physics core
+        run: |
+          python -m weather_agent.pipeline --stage physics --out artifacts/05-physics.json
+          echo '## 05 — Physics core' >> "$GITHUB_STEP_SUMMARY"
           echo '```json' >> "$GITHUB_STEP_SUMMARY"
-          cat artifacts/04-physics.json >> "$GITHUB_STEP_SUMMARY"
+          cat artifacts/05-physics.json >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
-      - name: 05 — Thermodynamics, moisture and precipitation
+      - name: 06 — Thermodynamics, moisture and precipitation
         run: |
-          python -m weather_agent.pipeline --stage moisture --out artifacts/05-moisture.json
-          echo '## 05 — Thermodynamics, moisture and precipitation' >> "$GITHUB_STEP_SUMMARY"
+          python -m weather_agent.pipeline --stage moisture --out artifacts/06-moisture.json
+          echo '## 06 — Thermodynamics, moisture and precipitation' >> "$GITHUB_STEP_SUMMARY"
           echo '```json' >> "$GITHUB_STEP_SUMMARY"
-          cat artifacts/05-moisture.json >> "$GITHUB_STEP_SUMMARY"
+          cat artifacts/06-moisture.json >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
-      - name: 06 — Terrain and latitude-dependent Coriolis
+      - name: 07 — Terrain and latitude-dependent Coriolis
         run: |
-          python -m weather_agent.pipeline --stage terrain --out artifacts/06-terrain-coriolis.json
-          echo '## 06 — Terrain and Coriolis' >> "$GITHUB_STEP_SUMMARY"
+          python -m weather_agent.pipeline --stage terrain --out artifacts/07-terrain-coriolis.json
+          echo '## 07 — Terrain and Coriolis' >> "$GITHUB_STEP_SUMMARY"
           echo '```json' >> "$GITHUB_STEP_SUMMARY"
-          cat artifacts/06-terrain-coriolis.json >> "$GITHUB_STEP_SUMMARY"
+          cat artifacts/07-terrain-coriolis.json >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
-      - name: 07 — Observation generation
+      - name: 08 — Observation generation
         run: |
-          python -m weather_agent.pipeline --stage observations --out artifacts/07-observations.json
-          echo '## 07 — Observation generation' >> "$GITHUB_STEP_SUMMARY"
+          python -m weather_agent.pipeline --stage observations --out artifacts/08-observations.json
+          echo '## 08 — Observation generation' >> "$GITHUB_STEP_SUMMARY"
           echo '```json' >> "$GITHUB_STEP_SUMMARY"
-          cat artifacts/07-observations.json >> "$GITHUB_STEP_SUMMARY"
+          cat artifacts/08-observations.json >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
-      - name: 08 — Data assimilation
+      - name: 09 — Data assimilation
         run: |
-          python -m weather_agent.pipeline --stage assimilation --out artifacts/08-assimilation.json
-          echo '## 08 — Data assimilation' >> "$GITHUB_STEP_SUMMARY"
+          python -m weather_agent.pipeline --stage assimilation --out artifacts/09-assimilation.json
+          echo '## 09 — Data assimilation' >> "$GITHUB_STEP_SUMMARY"
           echo '```json' >> "$GITHUB_STEP_SUMMARY"
-          cat artifacts/08-assimilation.json >> "$GITHUB_STEP_SUMMARY"
+          cat artifacts/09-assimilation.json >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
-      - name: 09 — Ensemble forecast
+      - name: 10 — Ensemble forecast
         run: |
-          python -m weather_agent.pipeline --stage ensemble --out artifacts/09-ensemble.json
-          echo '## 09 — Ensemble forecast' >> "$GITHUB_STEP_SUMMARY"
+          python -m weather_agent.pipeline --stage ensemble --out artifacts/10-ensemble.json
+          echo '## 10 — Ensemble forecast' >> "$GITHUB_STEP_SUMMARY"
           echo '```json' >> "$GITHUB_STEP_SUMMARY"
-          cat artifacts/09-ensemble.json >> "$GITHUB_STEP_SUMMARY"
+          cat artifacts/10-ensemble.json >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
-      - name: 10 — Learned emulator
+      - name: 11 — Learned emulator
         run: |
-          python -m weather_agent.pipeline --stage emulator --out artifacts/10-emulator.json
-          echo '## 10 — Learned diagnostic emulator' >> "$GITHUB_STEP_SUMMARY"
+          python -m weather_agent.pipeline --stage emulator --out artifacts/11-emulator.json
+          echo '## 11 — Learned diagnostic emulator' >> "$GITHUB_STEP_SUMMARY"
           echo '```json' >> "$GITHUB_STEP_SUMMARY"
-          cat artifacts/10-emulator.json >> "$GITHUB_STEP_SUMMARY"
+          cat artifacts/11-emulator.json >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
-      - name: 11 — Forecast verification
+      - name: 12 — Forecast verification
         run: |
-          python -m weather_agent.pipeline --stage verification --out artifacts/11-verification.json
-          echo '## 11 — Forecast verification' >> "$GITHUB_STEP_SUMMARY"
+          python -m weather_agent.pipeline --stage verification --out artifacts/12-verification.json
+          echo '## 12 — Forecast verification' >> "$GITHUB_STEP_SUMMARY"
           echo '```json' >> "$GITHUB_STEP_SUMMARY"
-          cat artifacts/11-verification.json >> "$GITHUB_STEP_SUMMARY"
+          cat artifacts/12-verification.json >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
-      - name: 12 — Bounded learning from error
+      - name: 13 — Bounded learning from error
         run: |
-          python -m weather_agent.pipeline --stage learning --out artifacts/12-learning.json
-          echo '## 12 — Learning from forecast-system error' >> "$GITHUB_STEP_SUMMARY"
+          python -m weather_agent.pipeline --stage learning --out artifacts/13-learning.json
+          echo '## 13 — Learning from forecast-system error' >> "$GITHUB_STEP_SUMMARY"
           echo '```json' >> "$GITHUB_STEP_SUMMARY"
-          cat artifacts/12-learning.json >> "$GITHUB_STEP_SUMMARY"
+          cat artifacts/13-learning.json >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
-      - name: 13 — Run complete pipeline snapshot
-        run: python -m weather_agent.pipeline --stage all --out artifacts/13-complete-pipeline.json
+      - name: 14 — Run complete pipeline snapshot
+        run: python -m weather_agent.pipeline --stage all --out artifacts/14-complete-pipeline.json
 
-      - name: 14 — Publish research artifacts
+      - name: 15 — Publish research artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
