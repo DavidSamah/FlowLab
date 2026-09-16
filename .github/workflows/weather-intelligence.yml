@@ -47,6 +47,7 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+          cache-dependency-path: requirements-weather.txt
 
       - name: 02 — Install scientific dependencies
         run: pip install -r requirements-weather.txt
