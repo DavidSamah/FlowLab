@@ -5,7 +5,7 @@ import { useMemo, useState } from "react";
 function makeField(viscosity: number, steps: number) {
   const rows = 18, cols = 34;
   const a = Math.min(0.24, viscosity * 0.1);
-  let f = Array.from({ length: rows }, (_, y) => Array.from({ length: cols }, (_, x) =>
+  let f: number[][] = Array.from({ length: rows }, (_, y) => Array.from({ length: cols }, (_, x) =>
     y >= 8 && y <= 9 && x >= 3 && x <= 6 ? 1 : 0));
   for (let s = 0; s < steps; s++) {
     const previous = f;
