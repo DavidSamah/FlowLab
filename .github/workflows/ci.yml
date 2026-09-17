@@ -1,0 +1,72 @@
+name: FlowLab CI
+
+on:
+  push:
+    branches: [main, reproducible-build-ci]
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  gated-validation:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Repository and CI search trace
+        run: bash scripts/trace-repo-ci.sh
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          if [[ -f package-lock.json ]]; then
+            echo "Strict reproducible install: npm ci"
+            npm ci --no-audit --no-fund
+          else
+            echo "Bootstrap install: generating package-lock.json"
+            npm install --no-audit --no-fund
+          fi
+
+      - name: Build gate
+        run: npm run build
+
+      - name: Type-check gate
+        run: npm run typecheck
+
+      - name: Lint gate
+        run: npm run lint
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install numerical-test dependencies
+        run: python -m pip install -r requirements-test.txt
+
+      - name: Numerical regression gate
+        run: python -m pytest -q
+
+      - name: Commit generated dependency lock after all gates pass
+        if: github.event_name == 'push' && github.ref_name == 'reproducible-build-ci'
+        shell: bash
+        run: |
+          if git ls-files --error-unmatch package-lock.json >/dev/null 2>&1; then
+            echo "package-lock.json already tracked; strict npm ci validation completed."
+            exit 0
+          fi
+          test -f package-lock.json
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package-lock.json
+          git commit -m "build: lock npm dependencies"
+          git push origin HEAD:reproducible-build-ci
