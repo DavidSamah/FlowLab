@@ -56,6 +56,42 @@ jobs:
       - name: Numerical regression gate
         run: python -m pytest -q
 
+      - name: Runtime smoke gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm start -- -H 127.0.0.1 -p 3000 >/tmp/flowlab-next.log 2>&1 &
+          pid=$!
+          trap 'kill "$pid" 2>/dev/null || true' EXIT
+
+          ready=0
+          for _ in $(seq 1 30); do
+            if curl --fail --silent --show-error http://127.0.0.1:3000/ >/tmp/flowlab-home.html; then
+              ready=1
+              break
+            fi
+            if ! kill -0 "$pid" 2>/dev/null; then
+              echo "FlowLab server exited before becoming ready"
+              cat /tmp/flowlab-next.log
+              exit 1
+            fi
+            sleep 1
+          done
+
+          if [[ "$ready" != "1" ]]; then
+            echo "FlowLab did not become ready within 30 seconds"
+            cat /tmp/flowlab-next.log
+            exit 1
+          fi
+
+          grep -q "A transparent fluid laboratory" /tmp/flowlab-home.html
+          curl --fail --silent --show-error http://127.0.0.1:3000/ >/dev/null
+          echo "Runtime smoke gate PASS"
+
+          kill "$pid" 2>/dev/null || true
+          wait "$pid" 2>/dev/null || true
+          trap - EXIT
+
       - name: Commit generated dependency lock after all gates pass
         if: github.event_name == 'push' && github.ref_name == 'reproducible-build-ci'
         shell: bash
