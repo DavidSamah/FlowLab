@@ -1,0 +1,198 @@
+name: Weather Intelligence Research Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      latitude:
+        description: "Center latitude for live Open-Meteo ingestion"
+        required: true
+        default: "-1.2864"
+      longitude:
+        description: "Center longitude for live Open-Meteo ingestion"
+        required: true
+        default: "36.8172"
+      grid_span_deg:
+        description: "Live spatial box span in degrees (lat and lon)"
+        required: true
+        default: "4.0"
+      grid_rows:
+        description: "Number of latitude samples"
+        required: true
+        default: "5"
+      grid_cols:
+        description: "Number of longitude samples"
+        required: true
+        default: "5"
+  pull_request:
+    paths:
+      - "weather_agent/**"
+      - "tests/**"
+      - "requirements-weather.txt"
+      - ".github/workflows/weather-intelligence.yml"
+  push:
+    branches:
+      - weather-intelligence-architecture
+    paths:
+      - "weather_agent/**"
+      - "tests/**"
+      - "requirements-weather.txt"
+      - ".github/workflows/weather-intelligence.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  weather-system:
+    name: Full weather intelligence architecture
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      FLOWLAB_LATITUDE: ${{ github.event.inputs.latitude || '-1.2864' }}
+      FLOWLAB_LONGITUDE: ${{ github.event.inputs.longitude || '36.8172' }}
+      FLOWLAB_GRID_SPAN: ${{ github.event.inputs.grid_span_deg || '4.0' }}
+      FLOWLAB_GRID_ROWS: ${{ github.event.inputs.grid_rows || '5' }}
+      FLOWLAB_GRID_COLS: ${{ github.event.inputs.grid_cols || '5' }}
+
+    steps:
+      - name: 00 — Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 01 — Configure Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-weather.txt
+
+      - name: 02 — Install scientific dependencies
+        run: pip install -r requirements-weather.txt
+
+      - name: 03 — Run unit and numerical tests
+        run: pytest -q
+
+      - name: 04 — Live point atmosphere — Open-Meteo
+        continue-on-error: true
+        run: |
+          mkdir -p artifacts
+          python -m weather_agent.live_ingest \
+            --latitude "$FLOWLAB_LATITUDE" \
+            --longitude "$FLOWLAB_LONGITUDE" \
+            --out artifacts/04-live-open-meteo.json
+          echo '## 04 — Live atmosphere point sample' >> "$GITHUB_STEP_SUMMARY"
+          echo "Coordinates: $FLOWLAB_LATITUDE, $FLOWLAB_LONGITUDE" >> "$GITHUB_STEP_SUMMARY"
+          echo 'Provider: Open-Meteo — https://open-meteo.com/' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Data licence/attribution: CC BY 4.0; see provider documentation.' >> "$GITHUB_STEP_SUMMARY"
+          if [ -f artifacts/04-live-open-meteo.json ]; then
+            echo '```json' >> "$GITHUB_STEP_SUMMARY"
+            cat artifacts/04-live-open-meteo.json >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'Point API unavailable; later research stages continue.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: 05 — Live spatial field → FlowLab initial condition
+        continue-on-error: true
+        run: |
+          python -m weather_agent.live_grid \
+            --latitude "$FLOWLAB_LATITUDE" \
+            --longitude "$FLOWLAB_LONGITUDE" \
+            --lat-span "$FLOWLAB_GRID_SPAN" \
+            --lon-span "$FLOWLAB_GRID_SPAN" \
+            --rows "$FLOWLAB_GRID_ROWS" \
+            --cols "$FLOWLAB_GRID_COLS" \
+            --forecast-hours 1.0 \
+            --artifact-dir artifacts/live-grid
+          echo '## 05 — Real atmosphere → numerical initial condition → PDE forecast' >> "$GITHUB_STEP_SUMMARY"
+          echo "Spatial box center: $FLOWLAB_LATITUDE, $FLOWLAB_LONGITUDE" >> "$GITHUB_STEP_SUMMARY"
+          echo "Grid samples: ${FLOWLAB_GRID_ROWS}×${FLOWLAB_GRID_COLS}; span: ${FLOWLAB_GRID_SPAN}°" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f artifacts/live-grid/live-grid-summary.json ]; then
+            echo '```json' >> "$GITHUB_STEP_SUMMARY"
+            cat artifacts/live-grid/live-grid-summary.json >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'Spatial API unavailable; synthetic/research stages continue.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: 06 — Physics core
+        run: |
+          python -m weather_agent.pipeline --stage physics --out artifacts/06-physics.json
+          echo '## 06 — Physics core' >> "$GITHUB_STEP_SUMMARY"
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"
+          cat artifacts/06-physics.json >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 07 — Thermodynamics, moisture and precipitation
+        run: |
+          python -m weather_agent.pipeline --stage moisture --out artifacts/07-moisture.json
+          echo '## 07 — Thermodynamics, moisture and precipitation' >> "$GITHUB_STEP_SUMMARY"
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"
+          cat artifacts/07-moisture.json >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 08 — Terrain and latitude-dependent Coriolis
+        run: |
+          python -m weather_agent.pipeline --stage terrain --out artifacts/08-terrain-coriolis.json
+          echo '## 08 — Terrain and Coriolis' >> "$GITHUB_STEP_SUMMARY"
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"
+          cat artifacts/08-terrain-coriolis.json >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 09 — Observation generation
+        run: |
+          python -m weather_agent.pipeline --stage observations --out artifacts/09-observations.json
+          echo '## 09 — Observation generation' >> "$GITHUB_STEP_SUMMARY"
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"
+          cat artifacts/09-observations.json >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 10 — Data assimilation
+        run: |
+          python -m weather_agent.pipeline --stage assimilation --out artifacts/10-assimilation.json
+          echo '## 10 — Data assimilation' >> "$GITHUB_STEP_SUMMARY"
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"
+          cat artifacts/10-assimilation.json >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 11 — Ensemble forecast
+        run: |
+          python -m weather_agent.pipeline --stage ensemble --out artifacts/11-ensemble.json
+          echo '## 11 — Ensemble forecast' >> "$GITHUB_STEP_SUMMARY"
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"
+          cat artifacts/11-ensemble.json >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 12 — Learned emulator
+        run: |
+          python -m weather_agent.pipeline --stage emulator --out artifacts/12-emulator.json
+          echo '## 12 — Learned diagnostic emulator' >> "$GITHUB_STEP_SUMMARY"
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"
+          cat artifacts/12-emulator.json >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 13 — Forecast verification
+        run: |
+          python -m weather_agent.pipeline --stage verification --out artifacts/13-verification.json
+          echo '## 13 — Forecast verification' >> "$GITHUB_STEP_SUMMARY"
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"
+          cat artifacts/13-verification.json >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 14 — Bounded learning from error
+        run: |
+          python -m weather_agent.pipeline --stage learning --out artifacts/14-learning.json
+          echo '## 14 — Learning from forecast-system error' >> "$GITHUB_STEP_SUMMARY"
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"
+          cat artifacts/14-learning.json >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 15 — Run complete pipeline snapshot
+        run: python -m weather_agent.pipeline --stage all --out artifacts/15-complete-pipeline.json
+
+      - name: 16 — Publish research artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: weather-intelligence-results
+          path: artifacts/
+          if-no-files-found: warn
+          retention-days: 30
